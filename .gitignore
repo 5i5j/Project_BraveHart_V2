@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.env
+
+# Data & Logs
+data/
+minio_data/
+*.parquet
+*.log
+
+# Pico C++ SDK & Build (C++ 编译产物)
+build/
+.vscode/
+.cmake/
+cmake-build-*/
+*.elf
+*.bin
+*.uf2
+*.map
+
+# OS
+.DS_Store

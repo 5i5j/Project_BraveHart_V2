@@ -1,0 +1,180 @@
+/**
+ * @file main.cpp
+ * @brief Integrated MVP: Dual-Core, TCA9548A, and Interrupt-Driven BNO085/AS5600.
+ * * Architecture:
+ * - Core 0: uROS/Serial Task (Communication & System Monitoring)
+ * - Core 1: IMU Task (Deterministic High-Frequency Data Acquisition)
+ */
+
+extern "C" {
+    #include "FreeRTOS.h"
+    #include "task.h"
+    #include "semphr.h"
+}
+
+#include <stdio.h>
+#include <string.h>
+#include "pico/stdlib.h"
+#include "hardware/i2c.h"
+
+/* --- I2C & Hardware Pins --- */
+#define I2C_PORT i2c0
+#define TCA_ADDR 0x70
+#define BNO_ADDR 0x4A
+#define AS5600_ADDR 0x36
+
+#define SDA_PIN 4
+#define SCL_PIN 5
+#define BNO_RST_PIN 14
+#define BNO_INT_PIN 15
+
+#define AS5600_RAW_ANGLE_REG 0x0C
+
+/* --- Global Handles --- */
+SemaphoreHandle_t xI2CMutex = NULL;
+SemaphoreHandle_t xIMUReadySem = NULL;
+TaskHandle_t xIMUTaskHandle = NULL;
+TaskHandle_t xSerialTaskHandle = NULL;
+
+/**
+ * @brief Selects a TCA9548A channel (Thread-safe inside tasks)
+ */
+void tca_select(uint8_t channel) {
+    if (channel > 7) return;
+    uint8_t control_reg = (1 << channel);
+    i2c_write_blocking(I2C_PORT, TCA_ADDR, &control_reg, 1, false);
+}
+
+/**
+ * @brief GPIO Interrupt Callback (ISR)
+ * Triggered by BNO085 INT pin to wake up Core 1.
+ */
+void gpio_irq_handler(uint gpio, uint32_t events) {
+    if (gpio == BNO_INT_PIN) {
+        static BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        // Release semaphore to unblock the IMU task
+        xSemaphoreGiveFromISR(xIMUReadySem, &xHigherPriorityTaskWoken);
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    }
+}
+
+/**
+ * @brief Core 1: IMU & Encoder Data Acquisition
+ */
+void vIMUTask(void *pvParameters) {
+    // 1. Hardware Reset Sequence for BNO085
+    gpio_put(BNO_RST_PIN, 0);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    gpio_put(BNO_RST_PIN, 1);
+    vTaskDelay(pdMS_TO_TICKS(500)); 
+
+    printf("[Core 1] BNO085 Reset Complete. Starting Capture...\n");
+
+    for (;;) {
+        // 2. Wait for INT signal from BNO085 (The "Pacer")
+        if (xSemaphoreTake(xIMUReadySem, portMAX_DELAY) == pdTRUE) {
+            
+            // 3. Acquire I2C Bus Mutex
+            if (xSemaphoreTake(xI2CMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                
+                /* --- Read BNO085 (Channel 0) --- */
+                tca_select(0);
+                // Placeholder for BNO08x library data read
+                printf("[Core 1] IMU Hit! ");
+
+                /* --- Read AS5600 (Channel 1) --- */
+                tca_select(1);
+                uint8_t reg = AS5600_RAW_ANGLE_REG;
+                uint8_t buffer[2];
+                
+                if (i2c_write_blocking(I2C_PORT, AS5600_ADDR, &reg, 1, true) >= 0) {
+                    if (i2c_read_blocking(I2C_PORT, AS5600_ADDR, buffer, 2, false) == 2) {
+                        uint16_t raw_angle = ((uint16_t)buffer[0] << 8) | buffer[1];
+                        printf("| Motor Angle: %d\n", raw_angle);
+                    }
+                }
+                
+                // 4. Release I2C Bus
+                xSemaphoreGive(xI2CMutex);
+            }
+        }
+    }
+}
+
+/**
+ * @brief Core 0: Monitoring and Heartbeat
+ */
+void vSerialTask(void *pvParameters) {
+    const uint LED_PIN = PICO_DEFAULT_LED_PIN;
+    gpio_init(LED_PIN);
+    gpio_set_dir(LED_PIN, GPIO_OUT);
+
+    for (;;) {
+        gpio_put(LED_PIN, 1);
+        printf("[Core 0] Heartbeat: OK (Current Core: %d)\n", get_core_num());
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        
+        gpio_put(LED_PIN, 0);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+int main() {
+    // Initialize standard I/O
+    stdio_init_all();
+
+    // --- I2C Initialization (400kHz) ---
+    i2c_init(I2C_PORT, 400 * 1000);
+    gpio_set_function(SDA_PIN, GPIO_FUNC_I2C);
+    gpio_set_function(SCL_PIN, GPIO_FUNC_I2C);
+    gpio_pull_up(SDA_PIN);
+    gpio_pull_up(SCL_PIN);
+
+    // --- BNO085 Control Pins ---
+    gpio_init(BNO_RST_PIN);
+    gpio_set_dir(BNO_RST_PIN, GPIO_OUT);
+    
+    gpio_init(BNO_INT_PIN);
+    gpio_set_dir(BNO_INT_PIN, GPIO_IN);
+    gpio_pull_up(BNO_INT_PIN); 
+
+    // --- Create Sync Objects ---
+    xI2CMutex = xSemaphoreCreateMutex();
+    xIMUReadySem = xSemaphoreCreateBinary();
+
+    if (xI2CMutex != NULL && xIMUReadySem != NULL) {
+        
+        // Setup GPIO Interrupt for BNO_INT_PIN
+        gpio_set_irq_enabled_with_callback(BNO_INT_PIN, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
+
+        // Create Sensor Task on Core 1
+        xTaskCreate(vIMUTask, "IMU_Task", 4096, NULL, 10, &xIMUTaskHandle);
+        vTaskCoreAffinitySet(xIMUTaskHandle, (1 << 1));
+
+        // Create Serial Task on Core 0
+        xTaskCreate(vSerialTask, "Serial_Task", 2048, NULL, 5, &xSerialTaskHandle);
+        vTaskCoreAffinitySet(xSerialTaskHandle, (1 << 0));
+
+        // Start FreeRTOS Scheduler
+        vTaskStartScheduler();
+    }
+
+    // Should never reach here
+    while (1) {
+        tight_loop_contents();
+    }
+}
+
+/* --- FreeRTOS Hooks --- */
+extern "C" {
+    void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
+        (void) pcTaskName;
+        (void) xTask;
+        printf("ERROR: Stack overflow in task %s\n", pcTaskName);
+        while(1); 
+    }
+    void vApplicationMallocFailedHook(void) {
+        printf("ERROR: Malloc failed\n");
+        while(1);
+    }
+}
