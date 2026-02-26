@@ -16,6 +16,16 @@ project(BraveHart_V2_Project C CXX ASM)
 # 4. Initialize Pico SDK
 pico_sdk_init()
 
+# Add FreeRTOS Kernel
+set(FREERTOS_KERNEL_PATH "${CMAKE_CURRENT_LIST_DIR}/src/firmware/FreeRTOS-Kernel")
+set(FREERTOS_PORT "GCC_RP2040")
+
+add_library(freertos_config INTERFACE)
+target_include_directories(freertos_config SYSTEM INTERFACE "${CMAKE_CURRENT_LIST_DIR}/src/firmware/pico_i2c_scan")
+target_compile_definitions(freertos_config INTERFACE projCOVERAGE_TEST=0)
+
+add_subdirectory(${FREERTOS_KERNEL_PATH})
+
 # 5. Include micro-ROS (Essential for the "Cerebellum" Architecture)
 include(${MICRO_ROS_PICO_SDK}/pico_micro_ros.cmake)
 

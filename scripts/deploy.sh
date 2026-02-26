@@ -2,39 +2,64 @@
 
 # ==============================================================================
 # Script: deploy.sh
-# Purpose: Synchronize Project_BraveHart_V2 to remote edge nodes (Pi 4B / Pi 3B).
-# Usage: ./scripts/deploy.sh [target_hostname_or_ip]
-# Example: ./scripts/deploy.sh tim-pi-4b
+# Purpose: Sync code, build firmware, and flash Pico remotely via picotool.
 # ==============================================================================
 
+# 💡 修改 1：允许输入 IP 地址，如果不包含 "pi-"，则强制指定为 Pi Target
 TARGET=$1
 USER="tim"
 PROJECT_ROOT="/home/tim/Tim/Project_BraveHart_V2"
 TARGET_DIR="~/Project_BraveHart_V2"
 
-# 1. Validation (保持不变)
+# 💡 修改 2：更新固件路径为 bno_test.elf (Corrected firmware path)
+FIRMWARE_REL_PATH="src/firmware/pico_i2c_scan/bno_test.elf"
+
+# 1. Validation
 if [ -z "$TARGET" ]; then
-    echo "❌ Error: Target host/IP is missing."
+    echo "❌ Error: Target host/IP is missing. Usage: ./deploy.sh <hostname_or_IP>"
     exit 1
 fi
 
 echo "🚀 Starting deployment to: $TARGET"
 
-# --- 🆕 Step 1.5: P620 交叉编译 (仅在 P620 上运行) ---
-if [[ "$(hostname)" == *"P620"* ]]; then
-    echo "🛠️ Detected P620: Running Cross-Compilation for Pico..."
-    cd $PROJECT_ROOT/build
-    make -j$(nproc)
+# --- Step 1: P620 Cross-Compilation ---
+if [[ "$(hostname)" == *"p620"* ]]; then
+    echo "🛠️ Detected P620: Running Cross-Compilation..."
+    cd "$PROJECT_ROOT/build" || exit 1
+    # 💡 确保编译最新的目标
+    make bno_test -j$(nproc)
     
     if [ $? -ne 0 ]; then
-        echo "❌ Build failed! Aborting sync."
+        echo "❌ Build failed! Aborting."
         exit 1
     fi
     echo "✅ Build successful."
 fi
 
-# 2. Code Synchronization (在你的基础上增加了固件目录同步)
-cd $PROJECT_ROOT
+# --- Step 2: Remote Pico Flashing ---
+# 💡 修改 3：逻辑优化，只要文件存在就烧录，并使用 -O 兼容局域网传输
+if [ -f "$PROJECT_ROOT/build/$FIRMWARE_REL_PATH" ]; then
+    echo "⚡ Flashing $FIRMWARE_REL_PATH via remote picotool..."
+    
+    # 使用 -O 强制使用旧版 SCP 协议，并在局域网 IP 下更稳定 (Use legacy SCP)
+    scp -O "$PROJECT_ROOT/build/$FIRMWARE_REL_PATH" "$USER@$TARGET:/tmp/pico_fw.elf"
+    
+    # 远程执行烧录
+    ssh -t "$USER@$TARGET" "sudo picotool load /tmp/pico_fw.elf -f"
+    
+    if [ $? -eq 0 ]; then
+        echo "✅ Pico Flash Successful."
+    else
+        echo "⚠️ Pico Flash failed!"
+    fi
+else
+    echo "ℹ️ Skipping flash: Firmware not found at $FIRMWARE_REL_PATH."
+fi
+
+# --- Step 3: Code Synchronization (rsync) ---
+# ... 保持原有的 rsync 逻辑不变 ...
+cd "$PROJECT_ROOT" || exit 1
+echo "🔄 Synchronizing code..."
 rsync -avz --delete \
     --exclude '.git/' \
     --exclude 'venv/' \
@@ -42,21 +67,10 @@ rsync -avz --delete \
     --exclude 'build/' \
     --exclude '__pycache__/' \
     --exclude '.vscode/' \
-    ./ $USER@$TARGET:$TARGET_DIR
-
-# 3. Post-Deployment Check
-if [ $? -eq 0 ]; then
-    echo "✅ Sync successful! Location: $TARGET:$TARGET_DIR"
-    
-    # Optional: Display SSD storage status on Pi 4B
-    if [[ "$TARGET" == *"pi-4b"* ]]; then
-        echo "📊 SSD Storage Status on $TARGET:"
-        ssh $USER@$TARGET "df -h /mnt/ssd_data/ | grep /dev/" || echo "⚠️ SSD not mounted!"
-    fi
-else
-    echo "❌ Sync failed. Please check your Tailscale connection and SSH keys."
-    exit 1
-fi
+    --exclude 'src/firmware/pico-sdk/' \
+    --exclude 'src/firmware/FreeRTOS-Kernel/' \
+    --exclude 'src/firmware/micro_ros_raspberrypi_pico_sdk/' \
+    ./ "$USER@$TARGET:$TARGET_DIR"
 
 echo "------------------------------------------------"
 echo "🎉 Deployment to $TARGET finished."

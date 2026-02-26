@@ -18,6 +18,9 @@
 #define PIN_INT 11
 #define I2C_INST i2c1
 #define BNO_ADDR 0x4A
+#define ENCODER_L_PIN 12
+#define ENCODER_R_PIN 14
+
 
 volatile uint32_t last_arrival_time_us = 0;
 volatile uint32_t current_delta_us = 0;
