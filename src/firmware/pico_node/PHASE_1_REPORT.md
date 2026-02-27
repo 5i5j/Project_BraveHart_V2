@@ -44,3 +44,4 @@ tim@tim-Ubuntu22-P620:~/Tim/Project_BraveHart_V2$ git commit -m "Phase 1: Added 
 | **Avg Jitter** | -53.30 us |
 
 **Conclusion:** The optimization reduced peak jitter by over 60%. The system is now significantly more deterministic. Remaining jitter is likely intrinsic to the BNO085 internal processing and I2C transaction timing. We are now ready for Phase 2.
+
