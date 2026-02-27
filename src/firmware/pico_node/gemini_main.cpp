@@ -9,57 +9,62 @@
 #include "sh2_err.h"
 #include "sh2_pico_hal.h"
 
-// -------------------- Hardware Defines --------------------
+// -------------------- 硬件定义 --------------------
 #define PIN_RST 10
 #define PIN_INT 11
 #define I2C_INST i2c1
-#define BNO_ADDR 0x4A
 #define TARGET_PERIOD_US 20000 
 
-// -------------------- Jitter Distribution Config --------------------
-#define LOG_SIZE 600
+// -------------------- 统计记录定义 --------------------
+#define LOG_SIZE 1000
 volatile int32_t jitter_array[LOG_SIZE];
 volatile uint32_t current_idx = 0;
 volatile bool recording_enabled = false;
+
+// -------------------- 全局标志位 --------------------
+volatile bool data_ready_flag = false;
 volatile uint32_t last_arrival_time_us = 0;
 
-// -------------------- Sensor Callback --------------------
+// -------------------- 中断服务函数 (ISR) --------------------
+// 当 BNO085 拉低 INT 引脚时触发
+void gpio_callback(uint gpio, uint32_t events) {
+    if (gpio == PIN_INT) {
+        data_ready_flag = true; 
+    }
+}
+
+// -------------------- 传感器回调 --------------------
 void sensorHandler(void *cookie, sh2_SensorEvent_t *event)
 {
     sh2_SensorValue_t value;
-
     if (sh2_decodeSensorEvent(&value, event) == SH2_OK)
     {
         if (value.sensorId == SH2_GAME_ROTATION_VECTOR)
         {
             uint32_t now = to_us_since_boot(get_absolute_time());
-
-            if (last_arrival_time_us != 0)
-            {
+            
+            if (recording_enabled && current_idx < LOG_SIZE && last_arrival_time_us != 0) {
                 uint32_t dt = now - last_arrival_time_us;
                 int32_t jitter = (int32_t)dt - TARGET_PERIOD_US;
-
-                // Only record if the "Silent Phase" is active
-                if (recording_enabled && current_idx < LOG_SIZE)
-                {
-                    jitter_array[current_idx++] = jitter;
-                }
+                jitter_array[current_idx++] = jitter;
             }
+
             last_arrival_time_us = now;
         }
     }
 }
 
-// -------------------- Core1: Driver Loop --------------------
+// -------------------- Core1: 精准驱动 --------------------
 void core1_entry()
 {
-    // Use your original 100kHz for stability first
-    i2c_init(i2c1, 100 * 1000);
+    // 💡 优化 1：升级 I2C 到 400kHz (Fast Mode)
+    i2c_init(i2c1, 400 * 1000); 
     gpio_set_function(6, GPIO_FUNC_I2C);
     gpio_set_function(7, GPIO_FUNC_I2C);
     gpio_pull_up(6);
     gpio_pull_up(7);
 
+    // 物理复位逻辑保持不变...
     gpio_init(PIN_RST);
     gpio_set_dir(PIN_RST, GPIO_OUT);
     gpio_put(PIN_RST, 0);
@@ -67,31 +72,37 @@ void core1_entry()
     gpio_put(PIN_RST, 1);
     sleep_ms(1000);
 
+    // 💡 优化 2：配置 GPIO 中断 (INT 引脚)
+    gpio_init(PIN_INT);
+    gpio_set_dir(PIN_INT, GPIO_IN);
+    gpio_pull_up(PIN_INT);
+    // 监听下降沿 (Falling Edge)
+    gpio_set_irq_enabled_with_callback(PIN_INT, GPIO_IRQ_EDGE_FALL, true, &gpio_callback);
+
     sh2_Hal_t* hal = get_sh2_pico_hal();
     if (sh2_open(hal, NULL, NULL) != SH2_OK) return;
-
-    uint32_t start = to_ms_since_boot(get_absolute_time());
-    while (to_ms_since_boot(get_absolute_time()) - start < 2000)
-    {
-        sh2_service();
-        sleep_ms(2);
-    }
 
     sh2_setSensorCallback(sensorHandler, NULL);
     sh2_SensorConfig_t config = {};
     config.reportInterval_us = TARGET_PERIOD_US;
-
-    while (sh2_setSensorConfig(SH2_GAME_ROTATION_VECTOR, &config) != SH2_OK)
-    {
+    while (sh2_setSensorConfig(SH2_GAME_ROTATION_VECTOR, &config) != SH2_OK) {
         sleep_ms(200);
     }
 
     while (true)
     {
-        sh2_service();
+        // 💡 只有当 INT 中断触发时，才调用 sh2_service
+        if (data_ready_flag) {
+            data_ready_flag = false;
+            sh2_service();
+        }
+        // 保持极短的休眠或 tight_loop 避免 Core 1 过热
+        tight_loop_contents();
     }
 }
 
+
+// main 函数逻辑保持你的统计输出版本即可...
 // -------------------- Core0: Logic & Analysis --------------------
 int main()
 {
