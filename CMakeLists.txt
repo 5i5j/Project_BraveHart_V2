@@ -21,13 +21,19 @@ set(FREERTOS_KERNEL_PATH "${CMAKE_CURRENT_LIST_DIR}/src/firmware/FreeRTOS-Kernel
 set(FREERTOS_PORT "GCC_RP2040")
 
 add_library(freertos_config INTERFACE)
-target_include_directories(freertos_config SYSTEM INTERFACE "${CMAKE_CURRENT_LIST_DIR}/src/firmware/pico_i2c_scan")
+target_include_directories(freertos_config SYSTEM INTERFACE "${CMAKE_CURRENT_LIST_DIR}/src/firmware/pico_node")
 target_compile_definitions(freertos_config INTERFACE projCOVERAGE_TEST=0)
+target_link_libraries(freertos_config INTERFACE pico_stdlib)
 
 add_subdirectory(${FREERTOS_KERNEL_PATH})
+
+# Ensure the RP2040 port library can find FreeRTOSConfig.h
+if (TARGET freertos_kernel_port)
+    target_link_libraries(freertos_kernel_port PUBLIC freertos_config)
+endif()
 
 # 5. Include micro-ROS (Essential for the "Cerebellum" Architecture)
 include(${MICRO_ROS_PICO_SDK}/pico_micro_ros.cmake)
 
 # 6. Add subdirectories
-add_subdirectory(src/firmware/pico_i2c_scan)
+add_subdirectory(src/firmware/pico_node)

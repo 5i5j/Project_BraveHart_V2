@@ -12,7 +12,8 @@ PROJECT_ROOT="/home/tim/Tim/Project_BraveHart_V2"
 TARGET_DIR="~/Project_BraveHart_V2"
 
 # 💡 修改 2：更新固件路径为 bno_test.elf (Corrected firmware path)
-FIRMWARE_REL_PATH="src/firmware/pico_i2c_scan/bno_test.elf"
+# FIRMWARE_REL_PATH="src/firmware/pico_i2c_scan/bno_test.elf"
+FIRMWARE_REL_PATH="src/firmware/pico_node/pico_node.elf"
 
 # 1. Validation
 if [ -z "$TARGET" ]; then

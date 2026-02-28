@@ -1,54 +1,47 @@
-; quadrature_encoder.pio
-; Professional grade PIO quadrature decoder for RP2040
-
 .program quadrature_encoder
+
+; The jump table is placed at origin 0. It is indexed by a 4-bit value:
+; {old_B, old_A, new_B, new_A}
 .origin 0
-
-    ; We use the X register as the 32-bit counter
-    ; We use the Y register as the previous state of the pins
-    ; Pin A is at pin_base, Pin B is at pin_base + 1
-
-    set x, 0            ; Initialize counter to 0
-    in pins, 2          ; Initial read of pins
-    mov y, isr          ; Store initial state in Y
+    jmp update_state    ; 0000: No change
+    jmp forwards_entry  ; 0001: Forwards (00 -> 01)
+    jmp backwards_entry ; 0010: Backwards (00 -> 10)
+    jmp update_state    ; 0011: Error
+    jmp backwards_entry ; 0100: Backwards (01 -> 00)
+    jmp update_state    ; 0101: No change
+    jmp update_state    ; 0110: Error
+    jmp forwards_entry  ; 0111: Forwards (01 -> 11)
+    jmp forwards_entry  ; 1000: Forwards (10 -> 00)
+    jmp update_state    ; 1001: Error
+    jmp update_state    ; 1010: No change
+    jmp backwards_entry ; 1011: Backwards (10 -> 11)
+    jmp update_state    ; 1100: Error
+    jmp backwards_entry ; 1101: Backwards (11 -> 01)
+    jmp forwards_entry  ; 1110: Forwards (11 -> 10)
+    jmp update_state    ; 1111: No change
 
 .wrap_target
-update:
+update_state:
+    mov y, pins         ; Store current pin state in Y
+poll_loop:
+    mov x, pins         ; Read new pin state into X
+    jmp x!=y, process   ; If changed, process it
+    jmp poll_loop       ; Else keep polling
+
+process:
     mov isr, null       ; Clear ISR
-    in y, 2             ; Shift old state into ISR (bits 3:2)
-    in pins, 2          ; Shift new state into ISR (bits 1:0)
-    mov y, isr          ; Update Y with new state for next cycle
+    in y, 2             ; Shift in old state {old_B, old_A}
+    in x, 2             ; Shift in new state {new_B, new_A}
+    mov pc, isr         ; Jump to table index (OldAB NewAB)
 
-    ; The 4-bit value in ISR now represents (OldA, OldB, NewA, NewB)
-    ; We use a jump table or a series of comparisons to update X
-    ; Here is a compact version:
-    
-    mov isr, y          ; Copy state to ISR
-    jmp !y, update      ; Simple debounce if needed
-
-    ; Note: For a full production driver, we'd use the 4-bit state
-    ; to jump to specific INC X or DEC X instructions.
-    ; For now, let's keep it simple for the initial test.
-    
+forwards_entry:
+    set x, 0            ; Prepare 0 for 'forwards'
+    jmp push_and_update
+backwards_entry:
+    set x, 1            ; Prepare 1 for 'backwards'
+    ; Fall through to shared push logic
+push_and_update:
+    mov isr, x          ; Push direction to FIFO
+    push noblock        ; Use noblock to avoid stalling if FIFO is full
+    jmp update_state    ; Restart the process
 .wrap
-
-% c-sdk {
-#include "hardware/pio.h"
-
-static inline void quadrature_encoder_program_init(PIO pio, uint sm, uint offset, uint pin_base) {
-    pio_sm_config c = quadrature_encoder_program_get_default_config(offset);
-    sm_config_set_in_pins(&c, pin_base);
-    pio_gpio_init(pio, pin_base);
-    pio_gpio_init(pio, pin_base + 1);
-    
-    // Pull-ups are essential for encoders
-    gpio_pull_up(pin_base);
-    gpio_pull_up(pin_base + 1);
-
-    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
-    sm_config_set_clkdiv(&c, 1.0); // Run at full speed
-
-    pio_sm_init(pio, sm, offset, &c);
-    pio_sm_set_enabled(pio, sm, true);
-}
-%}

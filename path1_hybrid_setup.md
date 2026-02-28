@@ -8,8 +8,9 @@
 ## 2. Hardware Connections
 - **BNO085 IMU:** Connected to Pico via I2C interface.
 - **Drive Motors (Rear):** Red/Black power wires connected to Motor A/B ports on **Robot Hat**.
-- **Motor Encoders:** Signal wires (A/B phases) connected to **Pico** GPIOs (for high-frequency pulse counting).
-- **Steering Motor (Clutch Gear):** 3-wire PWM interface connected to **Robot Hat** Servo/PWM ports.
+- **Motor Encoders:** Signal wires (A/B phases) connected to **Pico** GPIOs (for high-frequency pulse counting using PIO).
+- **Steering Motor (Clutch Gear/Servo):** 3-wire PWM interface connected to **Robot Hat** Servo/PWM ports.
+- **Ultrasonic sensor:** connected to Pico
 - **Power Supply:** 7.4V Battery connected to Robot Hat (Pi 3B powered via Hat).
 
 ## 3. Software Responsibilities

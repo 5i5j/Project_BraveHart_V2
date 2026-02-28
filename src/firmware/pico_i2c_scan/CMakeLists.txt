@@ -30,7 +30,7 @@ set(FREERTOS_SOURCES
 
 # 5. 创建目标
 add_executable(bno_test 
-    main.cpp 
+    chatgpt_main.cpp 
     ${IMU_DRV_SOURCES}
     ${FREERTOS_SOURCES}
 )

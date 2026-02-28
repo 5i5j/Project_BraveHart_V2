@@ -18,7 +18,7 @@ set(SH2_DIR "${BNO_LIB_DIR}/sh2")
 
 # Define the executable (定义可执行文件)
 add_executable(pico_node
-    gemini_main.cpp
+    encoder_main.cpp
     ${SH2_DIR}/src/sh2.c
     ${SH2_DIR}/src/sh2_SensorValue.c
     ${SH2_DIR}/src/sh2_util.c
@@ -26,6 +26,9 @@ add_executable(pico_node
     ${SH2_DIR}/src/sh2_pico_hal.cpp
     ${PROJ_ROOT}/src/firmware/pico/utils.cpp
 )
+
+# Generate the PIO header from the .pio file
+pico_generate_pio_header(pico_node ${CMAKE_CURRENT_SOURCE_DIR}/../pio_encoder/quadrature_encoder.pio)
 
 # Add include directories for peer libraries (添加同级库的头文件路径)
 target_include_directories(pico_node PRIVATE
