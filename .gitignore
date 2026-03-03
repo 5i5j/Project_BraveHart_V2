@@ -21,4 +21,12 @@ cmake-build-*/
 *.map
 
 # OS
-.DS_Store
+.DS_Storevenv/
+build/
+*.pyc
+__pycache__/
+venv/
+build/
+src/firmware/pico-sdk/
+*.pyc
+__pycache__/
